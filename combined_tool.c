@@ -24,6 +24,14 @@
 #define _WIN32_WINNT 0x0600
 #endif
 
+/* 定义 QuickEdit 模式标志（如果未定义） */
+#ifndef ENABLE_QUICK_EDIT_MODE
+#define ENABLE_QUICK_EDIT_MODE 0x0040
+#endif
+#ifndef ENABLE_EXTENDED_FLAGS
+#define ENABLE_EXTENDED_FLAGS 0x0080
+#endif
+
 #define NUM_EMOTIONS 12
 
 /* ============ 图片处理相关结构和函数 ============ */
@@ -977,10 +985,27 @@ void UninstallKeyboardHook() {
     }
 }
 
+/* 禁用控制台的QuickEdit模式，避免选中文本时程序暂停 */
+void DisableConsoleQuickEditMode() {
+    HANDLE hConsole = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode;
+    
+    if (GetConsoleMode(hConsole, &mode)) {
+        /* 移除 ENABLE_QUICK_EDIT_MODE 标志 */
+        mode &= ~ENABLE_QUICK_EDIT_MODE;
+        /* 保留 ENABLE_EXTENDED_FLAGS，这样才能修改 QuickEdit */
+        mode |= ENABLE_EXTENDED_FLAGS;
+        SetConsoleMode(hConsole, mode);
+    }
+}
+
 /* 主函数 */
 int main() {
     SetConsoleCP(CP_UTF8);
     SetConsoleOutputCP(CP_UTF8);
+    
+    /* 禁用QuickEdit模式，避免选中文本导致程序暂停 */
+    DisableConsoleQuickEditMode();
     
     printf("========================================\n");
     printf("  QQ/微信图片文字发送工具\n");
