@@ -206,39 +206,196 @@ int find_best_font_size(HDC hdc, const char* text, ImageConfig* config) {
     return best_size;
 }
 
-/* 在位图上绘制文本 */
-int draw_text_on_bitmap(HBITMAP hBitmap, const char* text, ImageConfig* config) {
-    HDC hdcScreen = GetDC(NULL);
-    HDC hdcMem = CreateCompatibleDC(hdcScreen);
-    HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
-    
-    int font_size = find_best_font_size(hdcMem, text, config);
-    
+/* 检查字符是否是方括号（半角或全角） */
+BOOL IsBracket(WCHAR c) {
+    return (c == L'[' || c == L']' || c == L'【' || c == L'】');
+}
+
+/* 检查字符是否是左方括号 */
+BOOL IsLeftBracket(WCHAR c) {
+    return (c == L'[' || c == L'【');
+}
+
+/* 检查字符是否是右方括号 */
+BOOL IsRightBracket(WCHAR c) {
+    return (c == L']' || c == L'】');
+}
+
+/* 结构：存储文本行和每个字符的颜色 */
+typedef struct {
+    WCHAR* chars;
+    COLORREF* colors;
+    int length;
+} ColoredLine;
+
+/* 将文本按行分割，并保留颜色信息 */
+int SplitTextIntoLines(HDC hdc, WCHAR* wtext, int font_size, ImageConfig* config, ColoredLine** outLines) {
+    /* 创建字体 */
     HFONT hFont = CreateFontA(
-        font_size, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,  /* FW_BOLD = 粗体 */
+        font_size, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         GB2312_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
         config->font_name
     );
     
-    HFONT hOldFont = (HFONT)SelectObject(hdcMem, hFont);
-    SetBkMode(hdcMem, TRANSPARENT);
-    SetTextColor(hdcMem, config->text_color);
+    HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+    
+    int len = wcslen(wtext);
+    int lineWidth = config->text_box_right - config->text_box_left;
+    
+    /* 分配行缓冲 */
+    ColoredLine* lines = (ColoredLine*)malloc(100 * sizeof(ColoredLine));
+    int lineCount = 0;
+    
+    /* 当前行的字符和颜色 */
+    WCHAR lineBuffer[4096];
+    COLORREF colorBuffer[4096];
+    int linePos = 0;
+    
+    BOOL inBracket = FALSE;
+    int currentX = 0;
+    
+    for (int i = 0; i <= len; i++) {
+        WCHAR ch = (i < len) ? wtext[i] : L'\0';
+        
+        /* 检测颜色变化 */
+        if (IsLeftBracket(ch)) {
+            inBracket = TRUE;
+        }
+        
+        COLORREF color = inBracket ? RGB(128, 0, 128) : config->text_color;
+        
+        /* 测量字符宽度 */
+        SIZE sz = {0};
+        if (i < len) {
+            GetTextExtentPoint32W(hdc, &ch, 1, &sz);
+        }
+        
+        /* 检查是否需要换行 */
+        if (i == len || ch == L'\n' || (currentX + sz.cx > lineWidth && linePos > 0)) {
+            /* 保存当前行 */
+            if (linePos > 0 || i == len) {
+                lines[lineCount].chars = (WCHAR*)malloc((linePos + 1) * sizeof(WCHAR));
+                lines[lineCount].colors = (COLORREF*)malloc(linePos * sizeof(COLORREF));
+                memcpy(lines[lineCount].chars, lineBuffer, linePos * sizeof(WCHAR));
+                lines[lineCount].chars[linePos] = L'\0';
+                memcpy(lines[lineCount].colors, colorBuffer, linePos * sizeof(COLORREF));
+                lines[lineCount].length = linePos;
+                lineCount++;
+                
+                linePos = 0;
+                currentX = 0;
+            }
+            
+            /* 如果是结束或换行符，继续下一个字符 */
+            if (i == len || ch == L'\n') {
+                if (IsRightBracket(ch)) {
+                    inBracket = FALSE;
+                }
+                continue;
+            }
+        }
+        
+        /* 添加字符到当前行 */
+        if (i < len) {
+            lineBuffer[linePos] = ch;
+            colorBuffer[linePos] = color;
+            linePos++;
+            currentX += sz.cx;
+        }
+        
+        if (IsRightBracket(ch)) {
+            inBracket = FALSE;
+        }
+    }
+    
+    SelectObject(hdc, hOldFont);
+    DeleteObject(hFont);
+    
+    *outLines = lines;
+    return lineCount;
+}
+
+/* 在位图上绘制带颜色的文本片段 */
+void DrawColoredTextSegments(HDC hdc, WCHAR* wtext, int font_size, ImageConfig* config) {
+    HFONT hFont = CreateFontA(
+        font_size, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        GB2312_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+        config->font_name
+    );
+    
+    HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+    SetBkMode(hdc, TRANSPARENT);
+    
+    /* 将文本分行 */
+    ColoredLine* lines = NULL;
+    int lineCount = SplitTextIntoLines(hdc, wtext, font_size, config, &lines);
+    
+    if (lineCount == 0) {
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hFont);
+        return;
+    }
+    
+    /* 计算行高 */
+    SIZE sz;
+    GetTextExtentPoint32W(hdc, L"测", 1, &sz);
+    int lineHeight = sz.cy;
+    
+    /* 计算总高度和起始Y */
+    int totalHeight = lineCount * lineHeight;
+    int startY = (config->text_box_top + config->text_box_bottom - totalHeight) / 2;
+    
+    /* 绘制每一行 */
+    for (int line = 0; line < lineCount; line++) {
+        /* 计算行宽度（用于居中） */
+        int lineWidth = 0;
+        for (int i = 0; i < lines[line].length; i++) {
+            GetTextExtentPoint32W(hdc, &lines[line].chars[i], 1, &sz);
+            lineWidth += sz.cx;
+        }
+        
+        int boxWidth = config->text_box_right - config->text_box_left;
+        int startX = config->text_box_left + (boxWidth - lineWidth) / 2;
+        
+        /* 绘制每个字符 */
+        int x = startX;
+        int y = startY + line * lineHeight;
+        
+        for (int i = 0; i < lines[line].length; i++) {
+            SetTextColor(hdc, lines[line].colors[i]);
+            GetTextExtentPoint32W(hdc, &lines[line].chars[i], 1, &sz);
+            TextOutW(hdc, x, y, &lines[line].chars[i], 1);
+            x += sz.cx;
+        }
+        
+        /* 释放行数据 */
+        free(lines[line].chars);
+        free(lines[line].colors);
+    }
+    
+    free(lines);
+    
+    SelectObject(hdc, hOldFont);
+    DeleteObject(hFont);
+}
+
+/* 在位图上绘制文本（带颜色支持） */
+int draw_text_on_bitmap(HBITMAP hBitmap, const char* text, ImageConfig* config) {
+    HDC hdcScreen = GetDC(NULL);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
     
     WCHAR wtext[4096];
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, 4096);
     
-    RECT rect;
-    rect.left = config->text_box_left;
-    rect.top = config->text_box_top;
-    rect.right = config->text_box_right;
-    rect.bottom = config->text_box_bottom;
+    int font_size = find_best_font_size(hdcMem, text, config);
     
-    DrawTextW(hdcMem, wtext, -1, &rect, DT_WORDBREAK | DT_CENTER | DT_VCENTER);
+    /* 使用复杂的分段绘制 */
+    DrawColoredTextSegments(hdcMem, wtext, font_size, config);
     
-    SelectObject(hdcMem, hOldFont);
     SelectObject(hdcMem, hOldBitmap);
-    DeleteObject(hFont);
     DeleteDC(hdcMem);
     ReleaseDC(NULL, hdcScreen);
     
