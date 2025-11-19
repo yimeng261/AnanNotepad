@@ -2,6 +2,7 @@
 chcp 65001 >nul
 echo ===================================
 echo  QQ图片文字发送工具 - 编译脚本
+echo  (内嵌资源版本)
 echo ===================================
 echo.
 
@@ -14,31 +15,56 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo [1/3] 检测编译环境
-gcc --version | findstr "gcc"
-echo.
-
-echo [2/3] 检查 STB 库文件...
-if not exist "stb_image.h" (
-    echo [错误] 缺少 stb_image.h
-    echo 请先运行 build_stb_tool.bat 下载库文件
+REM 检查windres工具
+where windres >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [错误] 未找到windres工具
+    echo windres是MinGW的一部分，请确保MinGW正确安装
     pause
     exit /b 1
 )
+
+echo [1/4] 检测编译环境
+gcc --version | findstr "gcc"
+echo.
+
+echo [2/4] 检查 STB 库文件...
+if not exist "stb_image.h" (
+    echo [错误] 缺少 stb_image.h
+    echo 正在下载...
+    powershell -Command "try { Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/nothings/stb/master/stb_image.h' -OutFile 'stb_image.h' } catch { Write-Host '下载失败，请手动下载' }"
+)
 if not exist "stb_image_write.h" (
     echo [错误] 缺少 stb_image_write.h  
-    echo 请先运行 build_stb_tool.bat 下载库文件
-    pause
+    echo 正在下载...
+    powershell -Command "try { Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h' -OutFile 'stb_image_write.h' } catch { Write-Host '下载失败，请手动下载' }"
+)
+
+if not exist "stb_image.h" (
+    echo [错误] stb_image.h 不存在
+    exit /b 1
+)
+if not exist "stb_image_write.h" (
+    echo [错误] stb_image_write.h 不存在
     exit /b 1
 )
 echo STB库文件已就绪
 echo.
 
-echo [3/3] 编译程序...
-gcc -o qq_image_sender.exe combined_tool.c -lgdi32 -luser32 -lpsapi -lm -O2
+echo [3/4] 编译资源文件...
+windres resources.rc -o resources.o
 if %errorlevel% neq 0 (
-    echo [错误] 编译失败
-    pause
+    echo [错误] 资源编译失败
+    echo 请确保 BaseImages 目录存在且包含所有图片
+    exit /b 1
+)
+echo ✓ 资源文件编译成功
+echo.
+
+echo [4/4] 编译程序...
+gcc -o qq_image_sender.exe combined_tool.c resources.o -lgdi32 -luser32 -lpsapi -lm -O2
+if %errorlevel% neq 0 (
+    echo [错误] 程序编译失败
     exit /b 1
 )
 
@@ -48,6 +74,11 @@ echo  编译成功！
 echo ===================================
 echo.
 echo 可执行文件: qq_image_sender.exe
+echo.
+echo 特点：
+echo   • 所有图片已内嵌到程序中
+echo   • 无需外部 BaseImages 文件夹
+echo   • 可以单独运行，方便分发
 echo.
 echo 使用方法:
 echo   1. 以管理员身份运行 qq_image_sender.exe
@@ -63,5 +94,3 @@ echo 示例:
 echo   今天天气真好#1  （使用开心表情）
 echo   什么情况#10      （使用惊讶表情）
 echo.
-pause
-

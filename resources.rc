@@ -1,0 +1,17 @@
+/* 资源定义文件 */
+#include "resource.h"
+
+/* PNG图片资源 */
+IDR_IMAGE_BASE      RCDATA  "BaseImages\\base.png"
+IDR_IMAGE_HAPPY     RCDATA  "BaseImages\\开心.png"
+IDR_IMAGE_ANGRY     RCDATA  "BaseImages\\生气.png"
+IDR_IMAGE_SPEECHLESS RCDATA "BaseImages\\无语.png"
+IDR_IMAGE_BLUSH     RCDATA  "BaseImages\\脸红.png"
+IDR_IMAGE_YANDERE   RCDATA  "BaseImages\\病娇.png"
+IDR_IMAGE_CLOSED    RCDATA  "BaseImages\\闭眼.png"
+IDR_IMAGE_SAD       RCDATA  "BaseImages\\难受.png"
+IDR_IMAGE_SCARED    RCDATA  "BaseImages\\害怕.png"
+IDR_IMAGE_EXCITED   RCDATA  "BaseImages\\激动.png"
+IDR_IMAGE_SURPRISED RCDATA  "BaseImages\\惊讶.png"
+IDR_IMAGE_CRYING    RCDATA  "BaseImages\\哭泣.png"
+

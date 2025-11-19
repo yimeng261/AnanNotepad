@@ -1,7 +1,9 @@
 /*
- * QQ图片文字发送工具 - 整合版
+ * QQ图片文字发送工具 - 整合版（内嵌资源）
  * 功能：监控QQ输入，将特定格式文本自动转换为图片并发送
- * 编译: gcc -o qq_image_sender.exe combined_tool.c -lgdi32 -luser32 -lpsapi -lm -O2
+ * 编译: 
+ *   windres resources.rc -o resources.o
+ *   gcc -o qq_image_sender.exe combined_tool.c resources.o -lgdi32 -luser32 -lpsapi -lm -O2
  */
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -16,15 +18,19 @@
 #include <psapi.h>
 #include <ctype.h>
 
+#include "resource.h"
+
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600
 #endif
+
+#define NUM_EMOTIONS 12
 
 /* ============ 图片处理相关结构和函数 ============ */
 
 /* 配置结构 */
 typedef struct {
-    char base_image_paths[12][512];
+    int resource_ids[NUM_EMOTIONS];  /* 资源ID数组 */
     char font_name[128];
     int text_box_left;
     int text_box_top;
@@ -44,18 +50,19 @@ typedef struct {
 
 /* 加载图片配置 */
 void load_image_config(ImageConfig* config) {
-    strcpy(config->base_image_paths[0], "BaseImages\\base.png");
-    strcpy(config->base_image_paths[1], "BaseImages\\开心.png");
-    strcpy(config->base_image_paths[2], "BaseImages\\生气.png");
-    strcpy(config->base_image_paths[3], "BaseImages\\无语.png");
-    strcpy(config->base_image_paths[4], "BaseImages\\脸红.png");
-    strcpy(config->base_image_paths[5], "BaseImages\\病娇.png");
-    strcpy(config->base_image_paths[6], "BaseImages\\闭眼.png");
-    strcpy(config->base_image_paths[7], "BaseImages\\难受.png");
-    strcpy(config->base_image_paths[8], "BaseImages\\害怕.png");
-    strcpy(config->base_image_paths[9], "BaseImages\\激动.png");
-    strcpy(config->base_image_paths[10], "BaseImages\\惊讶.png");
-    strcpy(config->base_image_paths[11], "BaseImages\\哭泣.png");
+    /* 设置资源ID */
+    config->resource_ids[0] = IDR_IMAGE_BASE;
+    config->resource_ids[1] = IDR_IMAGE_HAPPY;
+    config->resource_ids[2] = IDR_IMAGE_ANGRY;
+    config->resource_ids[3] = IDR_IMAGE_SPEECHLESS;
+    config->resource_ids[4] = IDR_IMAGE_BLUSH;
+    config->resource_ids[5] = IDR_IMAGE_YANDERE;
+    config->resource_ids[6] = IDR_IMAGE_CLOSED;
+    config->resource_ids[7] = IDR_IMAGE_SAD;
+    config->resource_ids[8] = IDR_IMAGE_SCARED;
+    config->resource_ids[9] = IDR_IMAGE_EXCITED;
+    config->resource_ids[10] = IDR_IMAGE_SURPRISED;
+    config->resource_ids[11] = IDR_IMAGE_CRYING;
     
     strcpy(config->font_name, "Microsoft YaHei");
     config->text_box_left = 119;
@@ -66,16 +73,42 @@ void load_image_config(ImageConfig* config) {
     config->max_font_height = 64;
 }
 
-/* 加载图片 */
-ImageData* load_image(const char* filename) {
+/* 从资源加载图片 */
+ImageData* load_image_from_resource(int resource_id) {
+    /* 查找资源 */
+    HRSRC hResource = FindResource(NULL, MAKEINTRESOURCE(resource_id), RT_RCDATA);
+    if (!hResource) {
+        printf("错误：找不到资源 ID=%d\n", resource_id);
+        return NULL;
+    }
+    
+    /* 加载资源 */
+    HGLOBAL hMemory = LoadResource(NULL, hResource);
+    if (!hMemory) {
+        printf("错误：无法加载资源 ID=%d\n", resource_id);
+        return NULL;
+    }
+    
+    /* 锁定资源 */
+    DWORD dwSize = SizeofResource(NULL, hResource);
+    LPVOID pData = LockResource(hMemory);
+    if (!pData) {
+        printf("错误：无法锁定资源 ID=%d\n", resource_id);
+        return NULL;
+    }
+    
+    /* 使用stb_image从内存加载图片 */
     ImageData* img = (ImageData*)malloc(sizeof(ImageData));
     if (!img) return NULL;
     
-    img->data = stbi_load(filename, &img->width, &img->height, &img->channels, 4);
+    img->data = stbi_load_from_memory((const unsigned char*)pData, dwSize, 
+                                      &img->width, &img->height, &img->channels, 4);
     if (!img->data) {
+        printf("stbi_load_from_memory 错误: %s\n", stbi_failure_reason());
         free(img);
         return NULL;
     }
+    
     img->channels = 4;
     return img;
 }
@@ -122,7 +155,7 @@ HBITMAP create_bitmap_from_data(ImageData* img) {
 /* 测量文本尺寸 */
 void measure_text(HDC hdc, const char* text, int font_size, SIZE* size, ImageConfig* config) {
     HFONT hFont = CreateFontA(
-        font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        font_size, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,  /* FW_BOLD = 粗体 */
         GB2312_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
         config->font_name
@@ -182,7 +215,7 @@ int draw_text_on_bitmap(HBITMAP hBitmap, const char* text, ImageConfig* config) 
     int font_size = find_best_font_size(hdcMem, text, config);
     
     HFONT hFont = CreateFontA(
-        font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        font_size, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,  /* FW_BOLD = 粗体 */
         GB2312_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
         config->font_name
@@ -221,11 +254,12 @@ char* generate_image(const char* text, int emotion_idx) {
     ImageConfig config;
     load_image_config(&config);
     
-    if (emotion_idx < 0 || emotion_idx > 11) {
+    if (emotion_idx < 0 || emotion_idx > NUM_EMOTIONS - 1) {
         emotion_idx = 0;
     }
     
-    ImageData* img = load_image(config.base_image_paths[emotion_idx]);
+    /* 从资源加载图片 */
+    ImageData* img = load_image_from_resource(config.resource_ids[emotion_idx]);
     if (!img) return NULL;
     
     HBITMAP hBitmap = create_bitmap_from_data(img);
@@ -281,9 +315,16 @@ char* generate_image(const char* text, int emotion_idx) {
 
 /* 将图片复制到剪贴板 (使用DIB格式，兼容QQ) */
 BOOL CopyImageToClipboard(const char* image_path) {
-    /* 加载图片 */
-    ImageData* img = load_image(image_path);
+    /* 加载图片文件（临时文件） */
+    ImageData* img = (ImageData*)malloc(sizeof(ImageData));
     if (!img) return FALSE;
+    
+    img->data = stbi_load(image_path, &img->width, &img->height, &img->channels, 4);
+    if (!img->data) {
+        free(img);
+        return FALSE;
+    }
+    img->channels = 4;
     
     /* 创建BITMAPINFOHEADER和位图数据 */
     BITMAPINFOHEADER bih;
@@ -350,8 +391,6 @@ BOOL CopyImageToClipboard(const char* image_path) {
     SetClipboardData(CF_DIB, hDIB);
     CloseClipboard();
     
-    /* 注意：hDIB由系统管理，不要手动GlobalFree */
-    
     return TRUE;
 }
 
@@ -359,38 +398,96 @@ BOOL CopyImageToClipboard(const char* image_path) {
 
 HHOOK g_hKeyboardHook = NULL;
 
-/* 检查是否是QQ窗口 */
-BOOL IsQQWindow(HWND hwnd) {
-    char className[256];
+/* 输入缓冲区 */
+#define INPUT_BUFFER_SIZE 1024
+char g_inputBuffer[INPUT_BUFFER_SIZE] = {0};
+int g_inputLength = 0;
+HWND g_lastWindow = NULL;
+
+/* 清空输入缓冲区 */
+void ClearInputBuffer() {
+    memset(g_inputBuffer, 0, INPUT_BUFFER_SIZE);
+    g_inputLength = 0;
+}
+
+/* 添加字符串到输入缓冲区（支持UTF-8多字节字符） */
+void AppendToInputBuffer(const char* str) {
+    int len = strlen(str);
+    if (g_inputLength + len < INPUT_BUFFER_SIZE - 1) {
+        strcat(g_inputBuffer, str);
+        g_inputLength += len;
+    }
+}
+
+/* 从输入缓冲区删除最后一个字符 */
+void RemoveLastCharFromBuffer() {
+    if (g_inputLength > 0) {
+        g_inputLength--;
+        g_inputBuffer[g_inputLength] = '\0';
+    }
+}
+
+
+BOOL IsOnlyDigits() {
+    for (int i = 0; i < g_inputLength; i++) {
+        if (!isdigit(g_inputBuffer[i])) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+BOOL HasTargetFormat(const char* text) {
+    int len = strlen(text);
+    if (len < 2) return FALSE;
     
-    if (hwnd == NULL || !IsWindow(hwnd)) return FALSE;
+    int i = len - 1;
+    while (i >= 0 && isdigit((unsigned char)text[i])) {
+        i--;
+    }
     
-    GetClassNameA(hwnd, className, sizeof(className));
-    
-    if (strstr(className, "TXGuiFoundation") != NULL) {
+    return (i >= 0 && text[i] == '#' && i < len - 1);
+}
+
+
+/* 判断是否需要触发剪贴板获取 */
+BOOL ShouldTriggerClipboard() {
+    if (g_inputLength == 0 || IsOnlyDigits() || HasTargetFormat(g_inputBuffer)) {
         return TRUE;
     }
     
-    if (strcmp(className, "#32770") == 0) {
-        DWORD pid;
-        GetWindowThreadProcessId(hwnd, &pid);
+    return FALSE;
+}
+
+
+
+/* 检查是否是支持的聊天窗口（QQ或微信） */
+BOOL IsSupportedChatWindow(HWND hwnd) {
+    if (hwnd == NULL || !IsWindow(hwnd)) return FALSE;
+    
+    DWORD pid;
+    GetWindowThreadProcessId(hwnd, &pid);
+    
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if (hProcess != NULL) {
+        char exePath[MAX_PATH];
+        DWORD size = GetModuleFileNameExA(hProcess, NULL, exePath, MAX_PATH);
         
-        HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-        if (hProcess != NULL) {
-            char processName[MAX_PATH];
-            if (GetModuleBaseNameA(hProcess, NULL, processName, sizeof(processName))) {
-                for (int i = 0; processName[i]; i++) {
-                    processName[i] = tolower(processName[i]);
-                }
-                if (strstr(processName, "qq.exe") != NULL) {
-                    CloseHandle(hProcess);
-                    return TRUE;
-                }
+        if (size > 0) {
+            for (DWORD i = 0; i < size; i++) {
+                exePath[i] = tolower(exePath[i]);
             }
-            CloseHandle(hProcess);
+            if (
+                strstr(exePath, "wechat.exe") != NULL || 
+                strstr(exePath, "weixin.exe") != NULL || 
+                strstr(exePath, "qq.exe") != NULL
+            ) {
+                CloseHandle(hProcess);
+                return TRUE;
+            }
         }
     }
-    
+    CloseHandle(hProcess);
     return FALSE;
 }
 
@@ -501,9 +598,9 @@ BOOL CaptureInputByClipboard(char* outputBuffer, int bufferSize) {
     
     ClearClipboard();
     SendKeys('A', TRUE);
-    Sleep(50);
+    Sleep(10);
     SendKeys('C', TRUE);
-    Sleep(50);
+    Sleep(10);
     
     BOOL success = GetClipboardText(outputBuffer, bufferSize);
     BackupClipboard(oldClipboard, sizeof(oldClipboard));
@@ -549,7 +646,7 @@ BOOL ProcessAndSendImage(const char* text) {
     
     /* 生成图片 */
     printf("→ 正在生成图片...\n");
-    char* image_path = generate_image(content, emotion_idx);
+    char* image_path = generate_image(content, emotion_idx%NUM_EMOTIONS);
     if (!image_path) {
         printf("× 生成图片失败\n");
         return FALSE;
@@ -568,10 +665,10 @@ BOOL ProcessAndSendImage(const char* text) {
     
     /* 直接粘贴图片（文字已处于全选状态，会自动覆盖） */
     printf("→ 正在粘贴图片...\n");
-    Sleep(1);
-    SendKeys('V', TRUE);  /* 粘贴图片 */
-    Sleep(1);           /* 等待图片加载 */
-    SendKeys(VK_RETURN, FALSE);  /* 发送 */
+    Sleep(50);
+    SendKeys('V', TRUE);
+    Sleep(50);
+    SendKeys(VK_RETURN, FALSE);
 
     return TRUE;
 }
@@ -580,12 +677,33 @@ BOOL ProcessAndSendImage(const char* text) {
 LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode >= 0) {
         KBDLLHOOKSTRUCT* pKeyboard = (KBDLLHOOKSTRUCT*)lParam;
+        HWND hForeground = GetForegroundWindow();
+        
+        /* 检查窗口是否切换 */
+        if (hForeground != g_lastWindow) {
+            ClearInputBuffer();
+            g_lastWindow = hForeground;
+        }
+        
+        /* 只在支持的聊天窗口中监听 */
+        if (!IsSupportedChatWindow(hForeground)) {
+            return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
+        }
         
         if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
-            if (pKeyboard->vkCode == VK_RETURN) {
-                HWND hForeground = GetForegroundWindow();
+            /* 处理退格键 */
+            if (pKeyboard->vkCode == VK_BACK) {
+                RemoveLastCharFromBuffer();
+            }
+            /* 处理Enter键 */
+            else if (pKeyboard->vkCode == VK_RETURN) {
+                printf("\n========================================\n");
+                printf("[调试] Enter键按下\n");
+                printf("当前输入缓冲: \"%s\" (长度: %d)\n", g_inputBuffer, g_inputLength);
+                printf("========================================\n");
                 
-                if (IsQQWindow(hForeground)) {
+                /* 判断是否需要触发剪贴板获取 */
+                if (ShouldTriggerClipboard()) {
                     char capturedText[8192];
                     if (CaptureInputByClipboard(capturedText, sizeof(capturedText))) {
                         /* 检查是否包含 #数字 格式 */
@@ -603,9 +721,70 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                         }
                         
                         if (shouldConvert) {
+                            ClearInputBuffer();  /* 清空缓冲区 */
                             ProcessAndSendImage(capturedText);
                             return 1;  /* 阻止Enter键传递 */
                         }
+                    }
+                }
+                
+                /* Enter后清空缓冲区 */
+                ClearInputBuffer();
+            }
+            /* 处理普通字符输入 */
+            else {
+                /* 在低级键盘钩子中，需要使用GetAsyncKeyState获取实时键盘状态 */
+                BYTE keyboardState[256] = {0};
+                
+                /* 手动设置修饰键状态 */
+                if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
+                    keyboardState[VK_SHIFT] = 0x80;
+                    keyboardState[VK_LSHIFT] = 0x80;
+                    keyboardState[VK_RSHIFT] = 0x80;
+                }
+                if (GetAsyncKeyState(VK_CONTROL) & 0x8000) {
+                    keyboardState[VK_CONTROL] = 0x80;
+                    keyboardState[VK_LCONTROL] = 0x80;
+                    keyboardState[VK_RCONTROL] = 0x80;
+                }
+                if (GetAsyncKeyState(VK_MENU) & 0x8000) {  /* Alt键 */
+                    keyboardState[VK_MENU] = 0x80;
+                    keyboardState[VK_LMENU] = 0x80;
+                    keyboardState[VK_RMENU] = 0x80;
+                }
+                if (GetAsyncKeyState(VK_CAPITAL) & 0x0001) {  /* CapsLock锁定状态 */
+                    keyboardState[VK_CAPITAL] = 0x01;
+                }
+                
+                /* 使用ToUnicode正确处理组合键和多字节字符 */
+                WCHAR unicodeBuffer[10] = {0};
+                int result = ToUnicode(
+                    pKeyboard->vkCode,
+                    pKeyboard->scanCode,
+                    keyboardState,
+                    unicodeBuffer,
+                    10,
+                    0
+                );
+                
+                /* result > 0 表示成功获取到字符 */
+                if (result > 0) {
+                    /* 将Unicode转换为UTF-8 */
+                    char utf8Buffer[32] = {0};
+                    int utf8Len = WideCharToMultiByte(
+                        CP_UTF8,
+                        0,
+                        unicodeBuffer,
+                        result,
+                        utf8Buffer,
+                        sizeof(utf8Buffer) - 1,
+                        NULL,
+                        NULL
+                    );
+                    
+                    if (utf8Len > 0) {
+                        utf8Buffer[utf8Len] = '\0';
+                        AppendToInputBuffer(utf8Buffer);
                     }
                 }
             }
@@ -647,17 +826,17 @@ int main() {
     SetConsoleOutputCP(CP_UTF8);
     
     printf("========================================\n");
-    printf("  QQ图片文字发送工具\n");
+    printf("  QQ/微信图片文字发送工具\n");
     printf("========================================\n");
     printf("\n");
     printf("功能说明:\n");
-    printf("  • 监听QQ窗口的输入\n");
+    printf("  • 监听QQ和微信窗口的输入\n");
     printf("  • 检测 #数字 格式自动转换为图片\n");
-    printf("  • 支持12种表情底图（0-11）\n");
+    printf("  • 支持%d种表情底图（0-%d）\n", NUM_EMOTIONS, NUM_EMOTIONS - 1);
     printf("  • 自动生成并发送图片\n");
     printf("\n");
     printf("使用方法:\n");
-    printf("  在QQ输入框输入: 你的文字#0\n");
+    printf("  在QQ/微信输入框输入: 你的文字#0\n");
     printf("  按Enter后会自动转换为图片并发送\n");
     printf("\n");
     printf("表情编号:\n");
@@ -667,25 +846,32 @@ int main() {
     printf("\n");
     printf("示例: 今天天气真好#1 (开心表情)\n");
     printf("\n");
+    printf("支持平台: QQ、微信\n");
     printf("按 Ctrl+C 退出程序\n");
     printf("========================================\n\n");
     
-    /* 检查必要文件 */
+    /* 检查资源是否可用 */
     ImageConfig config;
     load_image_config(&config);
     
-    BOOL foundImages = FALSE;
-    for (int i = 0; i < 12; i++) {
-        DWORD attrib = GetFileAttributesA(config.base_image_paths[i]);
-        if (attrib != INVALID_FILE_ATTRIBUTES) {
-            foundImages = TRUE;
-            break;
+    printf("正在检查图片资源...\n");
+    int loaded_count = 0;
+    for (int i = 0; i < NUM_EMOTIONS; i++) {
+        ImageData* test_img = load_image_from_resource(config.resource_ids[i]);
+        if (test_img) {
+            free_image(test_img);
+            loaded_count++;
         }
     }
     
-    if (!foundImages) {
-        printf("警告: 未找到底图文件，请确保 BaseImages 目录存在\n\n");
+    if (loaded_count == 0) {
+        printf("错误：未找到任何图片资源！\n");
+        printf("请确保程序正确编译并包含资源文件。\n\n");
+        system("pause");
+        return 1;
     }
+    
+    printf("✓ 成功加载 %d/%d 个图片资源\n\n", loaded_count, NUM_EMOTIONS);
     
     /* 安装键盘钩子 */
     if (!InstallKeyboardHook()) {
@@ -696,7 +882,7 @@ int main() {
     
     printf("✓ 键盘钩子已安装\n");
     printf("✓ 监控已启动\n");
-    printf("\n等待QQ窗口输入...\n\n");
+    printf("\n等待QQ/微信窗口输入...\n\n");
     
     /* 消息循环 */
     MSG msg;
